@@ -6,9 +6,17 @@ import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { RefreshCcw, Search } from 'lucide-react';
+import { RefreshCcw, Search, Database, AlertCircle } from 'lucide-react';
 import { formatDate } from '@/utils/dateUtils';
-import { generatePatientSummary, answerClinicalQuestion } from '@/services/aiSummaryService';
+import { fetchVisitsForPatient } from '@/services/dbService';
+import { 
+  generatePatientSummaryWithOllama, 
+  answerClinicalQuestionWithOllama,
+  isOllamaAvailable 
+} from '@/services/ollamaService';
+import { Toast } from '@/components/ui/toast';
+import { useToast } from '@/components/ui/use-toast';
+import { Skeleton } from '@/components/ui/skeleton';
 
 interface PatientSummaryProps {
   patient: Patient;
@@ -19,28 +27,66 @@ const PatientSummary: React.FC<PatientSummaryProps> = ({ patient }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [query, setQuery] = useState('');
   const [queryResult, setQueryResult] = useState<string | null>(null);
+  const [ollamaStatus, setOllamaStatus] = useState<boolean | null>(null);
+  const { toast } = useToast();
   
-  const handleGenerateSummary = () => {
+  // Check Ollama availability when component mounts
+  React.useEffect(() => {
+    const checkOllama = async () => {
+      const available = await isOllamaAvailable();
+      setOllamaStatus(available);
+    };
+    
+    checkOllama();
+  }, []);
+  
+  const handleGenerateSummary = async () => {
     setIsLoading(true);
-    // Simulate AI processing time
-    setTimeout(() => {
-      const generatedSummary = generatePatientSummary(patient);
+    
+    try {
+      // Fetch patient visits from the database service
+      const visits = await fetchVisitsForPatient(patient.id);
+      
+      // Use Ollama to generate the summary
+      const generatedSummary = await generatePatientSummaryWithOllama(
+        patient,
+        visits,
+        "Provide a comprehensive patient summary"
+      );
+      
       setSummary(generatedSummary);
+    } catch (error) {
+      console.error('Error generating summary:', error);
+      toast({
+        title: "Error",
+        description: "Failed to generate patient summary. Check connection to AI service.",
+        variant: "destructive",
+      });
+    } finally {
       setIsLoading(false);
-    }, 1000);
+    }
   };
   
-  const handleAskQuestion = (e: React.FormEvent) => {
+  const handleAskQuestion = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!query.trim()) return;
     
     setIsLoading(true);
-    // Simulate AI processing time
-    setTimeout(() => {
-      const result = answerClinicalQuestion(patient, query);
+    
+    try {
+      // Use Ollama to answer the clinical question
+      const result = await answerClinicalQuestionWithOllama(patient, query);
       setQueryResult(result);
+    } catch (error) {
+      console.error('Error answering question:', error);
+      toast({
+        title: "Error",
+        description: "Failed to answer question. Check connection to AI service.",
+        variant: "destructive",
+      });
+    } finally {
       setIsLoading(false);
-    }, 1000);
+    }
   };
   
   return (
@@ -53,19 +99,27 @@ const PatientSummary: React.FC<PatientSummaryProps> = ({ patient }) => {
               DOB: {formatDate(patient.dateOfBirth)} • MRN: {patient.mrn}
             </span>
           </div>
-          <Button 
-            variant="outline" 
-            size="sm"
-            onClick={handleGenerateSummary}
-            disabled={isLoading}
-          >
-            {isLoading ? (
-              <RefreshCcw className="h-4 w-4 mr-2 animate-spin" />
-            ) : (
-              <RefreshCcw className="h-4 w-4 mr-2" />
+          <div className="flex items-center gap-2">
+            {ollamaStatus !== null && (
+              <div className="flex items-center text-xs mr-2">
+                <div className={`w-2 h-2 rounded-full mr-1 ${ollamaStatus ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                <span>{ollamaStatus ? 'AI Connected' : 'AI Offline'}</span>
+              </div>
             )}
-            Generate Summary
-          </Button>
+            <Button 
+              variant="outline" 
+              size="sm"
+              onClick={handleGenerateSummary}
+              disabled={isLoading}
+            >
+              {isLoading ? (
+                <RefreshCcw className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <RefreshCcw className="h-4 w-4 mr-2" />
+              )}
+              Generate Summary
+            </Button>
+          </div>
         </CardTitle>
       </CardHeader>
       <CardContent className="p-4">
